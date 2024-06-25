@@ -4,15 +4,7 @@ api_request_list = {
         "contentType": "application/json",
         "accept": "*/*",
         "body": {
-            "prompt": "",
-            "max_tokens_to_sample": 300,
-            "temperature": 0.5,
-            "top_k": 250,
-            "top_p": 1,
-            "stop_sequences": [
-                "\n\nHuman:"
-            ],
-            "anthropic_version": "bedrock-2023-05-31"
+            
         }
     },
     'anthropic.claude-3-haiku-20240307-v1:0': {
@@ -20,15 +12,7 @@ api_request_list = {
         "contentType": "application/json",
         "accept": "*/*",
         "body": {
-            "prompt": "",
-            "max_tokens_to_sample": 300,
-            "temperature": 0.5,
-            "top_k": 250,
-            "top_p": 1,
-            "stop_sequences": [
-                "\n\nHuman:"
-            ],
-            "anthropic_version": "bedrock-2023-05-31"
+            
         }
     },
     'amazon.titan-text-express-v1': {

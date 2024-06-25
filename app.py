@@ -14,7 +14,7 @@ from amazon_transcribe.model import TranscriptEvent, TranscriptResultStream
 
 from api_request_schema import api_request_list, get_model_ids
 
-model_id = os.getenv('MODEL_ID', 'amazon.titan-text-express-v1')
+model_id = os.getenv('MODEL_ID', 'anthropic.claude-3-haiku-20240307-v1:0')
 aws_region = os.getenv('AWS_REGION', 'us-east-1')
 
 if model_id not in get_model_ids():
@@ -26,6 +26,9 @@ config = {
     'log_level': 'info',  # One of: info, debug, none
     'last_speech': "If you have any other questions, please don't hesitate to ask. Have a great day!",
     'region': aws_region,
+    'system_prompt' : "You are an intelligent assistant for anything user may ask.",
+    'temperature': 0.5,
+    'top_k':200,
     'polly': {
         'Engine': 'generative',
         'LanguageCode': 'en-US',
@@ -58,7 +61,7 @@ transcribe_streaming = TranscribeStreamingClient(region=config['region'])
 def printer(text, level):
     if config['log_level'] == 'info' and level == 'info':
         print(text)
-    elif config['log_level'] == 'debug' and level in ['info', 'debug']:
+    elif config['log_level'] == 'info' and level in ['info', 'debug']:
         print(text)
 
 
@@ -99,12 +102,16 @@ class BedrockModelsWrapper:
         model_provider = model_id.split('.')[0]
         body = config['bedrock']['api_request']['body']
 
+        print(text)
         if model_provider == 'amazon':
             body['inputText'] = text
         elif model_provider == 'meta':
             body['prompt'] = text
         elif model_provider == 'anthropic':
-            body['prompt'] = f'\n\nHuman: {text}\n\nAssistant:'
+            body = {
+                        "role": "user",
+                        "content": [{"text": text}]
+                    }
         elif model_provider == 'cohere':
             body['prompt'] = text
         else:
@@ -114,32 +121,33 @@ class BedrockModelsWrapper:
 
     @staticmethod
     def get_stream_chunk(event):
-        return event.get('chunk')
+        if 'contentBlockDelta' in event:
+            return event['contentBlockDelta']['delta']['text']
 
     @staticmethod
     def get_stream_text(chunk):
-        model_id = config['bedrock']['api_request']['modelId']
-        model_provider = model_id.split('.')[0]
+        # model_id = config['bedrock']['api_request']['modelId']
+        # model_provider = model_id.split('.')[0]
 
-        chunk_obj = ''
-        text = ''
-        if model_provider == 'amazon':
-            chunk_obj = json.loads(chunk.get('bytes').decode())
-            text = chunk_obj['outputText']
-        elif model_provider == 'meta':
-            chunk_obj = json.loads(chunk.get('bytes').decode())
-            text = chunk_obj['generation']
-        elif model_provider == 'anthropic':
-            chunk_obj = json.loads(chunk.get('bytes').decode())
-            text = chunk_obj['completion']
-        elif model_provider == 'cohere':
-            chunk_obj = json.loads(chunk.get('bytes').decode())
-            text = ' '.join([c["text"] for c in chunk_obj['generations']])
-        else:
-            raise NotImplementedError('Unknown model provider.')
+        # chunk_obj = ''
+        # text = ''
+        # if model_provider == 'amazon':
+        #     chunk_obj = json.loads(chunk.get('bytes').decode())
+        #     text = chunk_obj['outputText']
+        # elif model_provider == 'meta':
+        #     chunk_obj = json.loads(chunk.get('bytes').decode())
+        #     text = chunk_obj['generation']
+        # elif model_provider == 'anthropic':
+        #     chunk_obj = json.loads(chunk.get('bytes').decode())
+        #     text = chunk_obj['completion']
+        # elif model_provider == 'cohere':
+        #     chunk_obj = json.loads(chunk.get('bytes').decode())
+        #     text = ' '.join([c["text"] for c in chunk_obj['generations']])
+        # else:
+        #     raise NotImplementedError('Unknown model provider.')
 
-        printer(f'[DEBUG] {chunk_obj}', 'debug')
-        return text
+        # printer(f'[DEBUG] {chunk_obj}', 'debug')
+        return chunk
 
 
 def to_audio_generator(bedrock_stream):
@@ -147,9 +155,11 @@ def to_audio_generator(bedrock_stream):
 
     if bedrock_stream:
         for event in bedrock_stream:
+            print("1")
             chunk = BedrockModelsWrapper.get_stream_chunk(event)
             if chunk:
                 text = BedrockModelsWrapper.get_stream_text(chunk)
+                print("to_audio_text:" + text)
 
                 if '.' in text:
                     a = text.split('.')[:-1]
@@ -177,22 +187,30 @@ class BedrockWrapper:
 
     def invoke_bedrock(self, text):
         printer('[DEBUG] Bedrock generation started', 'debug')
-        self.speaking = True
+        self.speaking = False
 
         body = BedrockModelsWrapper.define_body(text)
         printer(f"[DEBUG] Request body: {body}", 'debug')
 
         try:
-            body_json = json.dumps(body)
-            response = bedrock_runtime.invoke_model_with_response_stream(
-                body=body_json,
+            # body_json = json.dumps(body)
+            # response = bedrock_runtime.invoke_model_with_response_stream(
+            #     body=body_json,
+            #     modelId=config['bedrock']['api_request']['modelId'],
+            #     accept=config['bedrock']['api_request']['accept'],
+            #     contentType=config['bedrock']['api_request']['contentType']
+            # )
+
+            response = bedrock_runtime.converse_stream(
                 modelId=config['bedrock']['api_request']['modelId'],
-                accept=config['bedrock']['api_request']['accept'],
-                contentType=config['bedrock']['api_request']['contentType']
+                messages=[body],
+                system=[{"text" : config['system_prompt']}],
+                inferenceConfig={"temperature": config['temperature']},
+                additionalModelRequestFields={"top_k": config['top_k']},
             )
 
             printer('[DEBUG] Capturing Bedrocks response/bedrock_stream', 'debug')
-            bedrock_stream = response.get('body')
+            bedrock_stream = response.get('stream')
 
             audio_gen = to_audio_generator(bedrock_stream)
             printer('[DEBUG] Created bedrock stream to audio generator', 'debug')
@@ -208,10 +226,9 @@ class BedrockWrapper:
             time.sleep(2)
             self.speaking = False
 
-        time.sleep(1)
+        time.sleep(0.5)
         self.speaking = False
         printer('\n[DEBUG] Bedrock generation completed', 'debug')
-
 
 class Reader:
 
@@ -345,10 +362,11 @@ class EventHandler(TranscriptResultStreamHandler):
                 if EventHandler.sample_count == EventHandler.max_sample_counter:
 
                     if len(EventHandler.text) == 0:
-                        last_speech = config['last_speech']
-                        print(last_speech, flush=True)
-                        aws_polly_tts(last_speech)
-                        os._exit(0)  # exit from a child process
+                        # last_speech = config['last_speech']
+                        # print(last_speech, flush=True)
+                        # aws_polly_tts(last_speech)
+                        # os._exit(0)  # exit from a child process
+                        None
                     else:
                         input_text = ' '.join(EventHandler.text)
                         printer(f'\n[INFO] User input: {input_text}', 'info')
@@ -367,7 +385,6 @@ class EventHandler(TranscriptResultStreamHandler):
 
 
 class MicStream:
-
     async def mic_stream(self):
         loop = asyncio.get_event_loop()
         input_queue = asyncio.Queue()
