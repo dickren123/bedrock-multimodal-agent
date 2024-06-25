@@ -155,7 +155,6 @@ def to_audio_generator(bedrock_stream):
 
     if bedrock_stream:
         for event in bedrock_stream:
-            print("1")
             chunk = BedrockModelsWrapper.get_stream_chunk(event)
             if chunk:
                 text = BedrockModelsWrapper.get_stream_text(chunk)
@@ -187,7 +186,7 @@ class BedrockWrapper:
 
     def invoke_bedrock(self, text):
         printer('[DEBUG] Bedrock generation started', 'debug')
-        self.speaking = False
+        self.speaking = True
 
         body = BedrockModelsWrapper.define_body(text)
         printer(f"[DEBUG] Request body: {body}", 'debug')
