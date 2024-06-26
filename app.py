@@ -146,7 +146,7 @@ class BedrockModelsWrapper:
         # else:
         #     raise NotImplementedError('Unknown model provider.')
 
-        # printer(f'[DEBUG] {chunk_obj}', 'debug')
+        # printer(f'[DEBUG] {chunk_obj}', 'debug') 
         return chunk
 
 
