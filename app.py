@@ -26,7 +26,7 @@ config = {
     'log_level': 'info',  # One of: info, debug, none
     'last_speech': "If you have any other questions, please don't hesitate to ask. Have a great day!",
     'region': aws_region,
-    'system_prompt' : "You are an intelligent assistant for anything user may ask.",
+    'system_prompt' : "You are an intelligent assistant for anything user may ask. Please use maximum 30 words to answer each question.",
     'temperature': 0.5,
     'top_k':200,
     'polly': {
@@ -56,7 +56,7 @@ p = pyaudio.PyAudio()
 bedrock_runtime = boto3.client(service_name='bedrock-runtime', region_name=config['region'])
 polly = boto3.client('polly', region_name=config['region'])
 transcribe_streaming = TranscribeStreamingClient(region=config['region'])
-
+polly_stream = p.open(format=pyaudio.paInt16, channels=1, rate=16000, output=True)
 
 def printer(text, level):
     if config['log_level'] == 'info' and level == 'info':
@@ -76,14 +76,16 @@ class UserInputManager:
     @staticmethod
     def start_shutdown_executor():
         UserInputManager.shutdown_executor = False
+        # UserInputManager.executor.shutdown()
         raise Exception()  # Workaround to shutdown exec, as executor.shutdown() doesn't work as expected.
 
     @staticmethod
     def start_user_input_loop():
-        while True:
-            sys.stdin.readline().strip()
-            printer(f'[DEBUG] User input to shut down executor...', 'debug')
-            UserInputManager.shutdown_executor = True
+        None
+        # while True:
+        #     sys.stdin.readline().strip()
+            # printer(f'[DEBUG] User input to shut down executor...', 'debug')
+            # # UserInputManager.shutdown_executor = True
 
     @staticmethod
     def is_executor_set():
@@ -186,7 +188,8 @@ class BedrockWrapper:
 
     def invoke_bedrock(self, text):
         printer('[DEBUG] Bedrock generation started', 'debug')
-        self.speaking = True
+
+        self.speaking = False
 
         body = BedrockModelsWrapper.define_body(text)
         printer(f"[DEBUG] Request body: {body}", 'debug')
@@ -215,17 +218,18 @@ class BedrockWrapper:
             printer('[DEBUG] Created bedrock stream to audio generator', 'debug')
 
             reader = Reader()
+            UserInputManager.shutdown_executor = False
             for audio in audio_gen:
                 reader.read(audio)
-
             reader.close()
+            
 
         except Exception as e:
             print(e)
-            time.sleep(2)
+            time.sleep(1)
             self.speaking = False
 
-        time.sleep(0.5)
+        time.sleep(0.1)
         self.speaking = False
         printer('\n[DEBUG] Bedrock generation completed', 'debug')
 
@@ -246,7 +250,6 @@ class Reader:
         )
 
         stream = response['AudioStream']
-
         while True:
             # Check if user signaled to shutdown Bedrock speech
             # UserInputManager.start_shutdown_executor() will raise Exception. If not ideas but is functional.
@@ -259,9 +262,17 @@ class Reader:
                 break
 
     def close(self):
-        time.sleep(1)
+        time.sleep(0.1)
         self.audio.stop_stream()
         self.audio.close()
+
+    def stop_stream(self):
+        if self.audio.is_active():
+            self.audio.stop_stream()
+
+    def start_stream(self):
+        if self.audio.is_stopped():
+            self.audio.start_stream()
 
 
 def stream_data(stream):
@@ -280,7 +291,7 @@ def stream_data(stream):
 
             # If there's no more data to read, stop streaming
             if not data:
-                time.sleep(0.5)
+                time.sleep(0.2)
                 stream.close()
                 polly_stream.stop_stream()
                 polly_stream.close()
@@ -325,20 +336,19 @@ def aws_polly_tts(polly_text):
 
 
 def read_byte_chunks(data):
-    polly_stream = p.open(format=pyaudio.paInt16, channels=1, rate=16000, output=True)
     polly_stream.write(data)
 
-    time.sleep(1)
+    time.sleep(0.1)
     polly_stream.stop_stream()
     polly_stream.close()
-    time.sleep(1)
+    time.sleep(0.1)
 
 
 class EventHandler(TranscriptResultStreamHandler):
     text = []
     last_time = 0
     sample_count = 0
-    max_sample_counter = 4
+    max_sample_counter = 2
 
     def __init__(self, transcript_result_stream: TranscriptResultStream, bedrock_wrapper):
         super().__init__(transcript_result_stream)
@@ -353,13 +363,11 @@ class EventHandler(TranscriptResultStreamHandler):
                     EventHandler.sample_count = 0
                     if not result.is_partial:
                         for alt in result.alternatives:
-                            print(alt.transcript, flush=True, end=' ')
+                            UserInputManager.shutdown_executor = True
                             EventHandler.text.append(alt.transcript)
-
             else:
                 EventHandler.sample_count += 1
                 if EventHandler.sample_count == EventHandler.max_sample_counter:
-
                     if len(EventHandler.text) == 0:
                         # last_speech = config['last_speech']
                         # print(last_speech, flush=True)
@@ -369,7 +377,6 @@ class EventHandler(TranscriptResultStreamHandler):
                     else:
                         input_text = ' '.join(EventHandler.text)
                         printer(f'\n[INFO] User input: {input_text}', 'info')
-
                         executor = ThreadPoolExecutor(max_workers=1)
                         # Add executor so Bedrock execution can be shut down, if user input signals so.
                         UserInputManager.set_executor(executor)
@@ -432,7 +439,6 @@ info_text = f'''
 *************************************************************
 '''
 print(info_text)
-
 loop = asyncio.get_event_loop()
 try:
     loop.run_until_complete(MicStream().basic_transcribe())
