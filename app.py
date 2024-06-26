@@ -98,6 +98,7 @@ class UserInputManager:
 
 class BedrockModelsWrapper:
 
+
     @staticmethod
     def define_body(text):
         model_id = config['bedrock']['api_request']['modelId']
@@ -157,7 +158,14 @@ def to_audio_generator(bedrock_stream):
 
     if bedrock_stream:
         for event in bedrock_stream:
+            # stop parsing result if shutdown_executor = True
+            if UserInputManager.is_executor_set() and UserInputManager.is_shutdown_scheduled():
+                print('[to audio generator] interrupted due to UserInputManager shutdown')
+                raise("[to audio generator] interrupted due to UserInputManager shutdown")
+                # break
+
             chunk = BedrockModelsWrapper.get_stream_chunk(event)
+
             if chunk:
                 text = BedrockModelsWrapper.get_stream_text(chunk)
                 print("to_audio_text:" + text)
@@ -182,6 +190,23 @@ class BedrockWrapper:
 
     def __init__(self):
         self.speaking = False
+        self.messages = []
+
+    def _put_user(self, user_msg):
+        print("invoking _put_user:", user_msg)
+        if len(self.messages) and self.messages[-1]['role'] == 'user':
+            self.messages[-1]['content'].extend(user_msg['content'])
+        else:
+            self.messages.append(user_msg)
+    
+    def _put_assist(self, assist_msg):
+        print("invoking _put_assist:", assist_msg)
+        if self.messages[-1]['role'] == 'assistant':
+            self.messages[-1]['content'].extend(assist_msg['content'])
+        else:
+            self.messages.append(assist_msg)
+
+    
 
     def is_speaking(self):
         return self.speaking
@@ -192,7 +217,9 @@ class BedrockWrapper:
         self.speaking = False
 
         body = BedrockModelsWrapper.define_body(text)
-        printer(f"[DEBUG] Request body: {body}", 'debug')
+        self._put_user(body)  # save user message
+
+        printer(f"[DEBUG] Request body: {self.messages}", 'debug')
 
         try:
             # body_json = json.dumps(body)
@@ -205,7 +232,7 @@ class BedrockWrapper:
 
             response = bedrock_runtime.converse_stream(
                 modelId=config['bedrock']['api_request']['modelId'],
-                messages=[body],
+                messages=self.messages,
                 system=[{"text" : config['system_prompt']}],
                 inferenceConfig={"temperature": config['temperature']},
                 additionalModelRequestFields={"top_k": config['top_k']},
@@ -220,15 +247,18 @@ class BedrockWrapper:
             reader = Reader()
             UserInputManager.shutdown_executor = False
             for audio in audio_gen:
+                self._put_assist({
+                    "role": "assistant",
+                    "content": [{"text": audio}]
+                })
+
                 reader.read(audio)
             reader.close()
-            
 
         except Exception as e:
             print(e)
             time.sleep(1)
             self.speaking = False
-
         time.sleep(0.1)
         self.speaking = False
         printer('\n[DEBUG] Bedrock generation completed', 'debug')
@@ -443,4 +473,4 @@ loop = asyncio.get_event_loop()
 try:
     loop.run_until_complete(MicStream().basic_transcribe())
 except (KeyboardInterrupt, Exception) as e:
-    print()
+    print(e)
