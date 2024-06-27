@@ -23,7 +23,7 @@ if model_id not in get_model_ids():
 
 api_request = api_request_list[model_id]
 config = {
-    'log_level': 'info',  # One of: info, debug, none
+    'log_level': 'demo',  # One of: info, debug, none, demo
     'last_speech': "If you have any other questions, please don't hesitate to ask. Have a great day!",
     'region': aws_region,
     'system_prompt' : "You are an intelligent assistant for anything user may ask. Please use maximum 30 words to answer each question.",
@@ -61,7 +61,9 @@ polly_stream = p.open(format=pyaudio.paInt16, channels=1, rate=16000, output=Tru
 def printer(text, level):
     if config['log_level'] == 'info' and level == 'info':
         print(text)
-    elif config['log_level'] == 'info' and level in ['info', 'debug']:
+    elif config['log_level'] == 'info' and level in ['info', 'debug', 'demo']:
+        print(text)
+    elif config['log_level'] == 'demo' and level in ['demo']:
         print(text)
 
 
@@ -105,7 +107,7 @@ class BedrockModelsWrapper:
         model_provider = model_id.split('.')[0]
         body = config['bedrock']['api_request']['body']
 
-        print(text)
+        # print(text)
         if model_provider == 'amazon':
             body['inputText'] = text
         elif model_provider == 'meta':
@@ -160,16 +162,16 @@ def to_audio_generator(bedrock_stream):
         for event in bedrock_stream:
             # stop parsing result if shutdown_executor = True
             if UserInputManager.is_executor_set() and UserInputManager.is_shutdown_scheduled():
-                print('[to audio generator] interrupted due to UserInputManager shutdown')
-                raise("[to audio generator] interrupted due to UserInputManager shutdown")
+                # print('[to audio generator] interrupted due to UserInputManager shutdown')
+                # raise("[to audio generator] interrupted due to UserInputManager shutdown")
                 # break
+                None
 
             chunk = BedrockModelsWrapper.get_stream_chunk(event)
 
             if chunk:
                 text = BedrockModelsWrapper.get_stream_text(chunk)
-                print("to_audio_text:" + text)
-
+                printer('[DEBUG] to_audio_text:' + text, 'debug')
                 if '.' in text:
                     a = text.split('.')[:-1]
                     to_polly = ''.join([prefix, '.'.join(a), '. '])
@@ -183,7 +185,7 @@ def to_audio_generator(bedrock_stream):
             print(prefix, flush=True, end='')
             yield f'{prefix}.'
 
-        print('\n')
+        # print('\n')
 
 
 class BedrockWrapper:
@@ -193,14 +195,14 @@ class BedrockWrapper:
         self.messages = []
 
     def _put_user(self, user_msg):
-        print("invoking _put_user:", user_msg)
+        printer('[DEBUG] invoking _put_user:' + str(user_msg), 'debug')
         if len(self.messages) and self.messages[-1]['role'] == 'user':
             self.messages[-1]['content'].extend(user_msg['content'])
         else:
             self.messages.append(user_msg)
     
     def _put_assist(self, assist_msg):
-        print("invoking _put_assist:", assist_msg)
+        printer('[DEBUG] invoking _put_assist:' + str(assist_msg), 'debug')
         if self.messages[-1]['role'] == 'assistant':
             self.messages[-1]['content'].extend(assist_msg['content'])
         else:
@@ -241,6 +243,7 @@ class BedrockWrapper:
             printer('[DEBUG] Capturing Bedrocks response/bedrock_stream', 'debug')
             bedrock_stream = response.get('stream')
 
+            print('assistant:')
             audio_gen = to_audio_generator(bedrock_stream)
             printer('[DEBUG] Created bedrock stream to audio generator', 'debug')
 
@@ -406,7 +409,7 @@ class EventHandler(TranscriptResultStreamHandler):
                         None
                     else:
                         input_text = ' '.join(EventHandler.text)
-                        printer(f'\n[INFO] User input: {input_text}', 'info')
+                        printer(f'\nUser: {input_text}', 'demo')
                         executor = ThreadPoolExecutor(max_workers=1)
                         # Add executor so Bedrock execution can be shut down, if user input signals so.
                         UserInputManager.set_executor(executor)
