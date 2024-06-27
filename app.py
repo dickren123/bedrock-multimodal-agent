@@ -29,6 +29,7 @@ config = {
     'system_prompt' : "You are an intelligent assistant for anything user may ask. Please use maximum 30 words to answer each question.",
     'temperature': 0.5,
     'top_k':200,
+    'interuption':True, # set False to realize a walkie talkie
     'polly': {
         'Engine': 'generative',
         'LanguageCode': 'en-US',
@@ -162,10 +163,9 @@ def to_audio_generator(bedrock_stream):
         for event in bedrock_stream:
             # stop parsing result if shutdown_executor = True
             if UserInputManager.is_executor_set() and UserInputManager.is_shutdown_scheduled():
-                # print('[to audio generator] interrupted due to UserInputManager shutdown')
-                # raise("[to audio generator] interrupted due to UserInputManager shutdown")
+                print('[to audio generator] interrupted due to UserInputManager shutdown')
+                raise("[to audio generator] interrupted due to UserInputManager shutdown")
                 # break
-                None
 
             chunk = BedrockModelsWrapper.get_stream_chunk(event)
 
@@ -216,7 +216,7 @@ class BedrockWrapper:
     def invoke_bedrock(self, text):
         printer('[DEBUG] Bedrock generation started', 'debug')
 
-        self.speaking = False
+        self.speaking = not config['interuption']
 
         body = BedrockModelsWrapper.define_body(text)
         self._put_user(body)  # save user message
@@ -396,8 +396,11 @@ class EventHandler(TranscriptResultStreamHandler):
                     EventHandler.sample_count = 0
                     if not result.is_partial:
                         for alt in result.alternatives:
-                            UserInputManager.shutdown_executor = True
+                            UserInputManager.shutdown_executor = config['interuption']
+                            # print(str(alt))
                             EventHandler.text.append(alt.transcript)
+                            print(alt.transcript)
+                            print(alt)
             else:
                 EventHandler.sample_count += 1
                 if EventHandler.sample_count == EventHandler.max_sample_counter:
@@ -409,7 +412,7 @@ class EventHandler(TranscriptResultStreamHandler):
                         None
                     else:
                         input_text = ' '.join(EventHandler.text)
-                        printer(f'\nUser: {input_text}', 'demo')
+                        printer(f'\nuser: \n{input_text}\n', 'demo')
                         executor = ThreadPoolExecutor(max_workers=1)
                         # Add executor so Bedrock execution can be shut down, if user input signals so.
                         UserInputManager.set_executor(executor)
@@ -450,7 +453,10 @@ class MicStream:
         stream = await transcribe_streaming.start_stream_transcription(
             language_code="en-US",
             media_sample_rate_hz=16000,
-            media_encoding="pcm",
+            media_encoding="pcm"
+            # enable_channel_identification=True,
+            # show_speaker_label=True,
+            # number_of_channels=2
         )
 
         handler = EventHandler(stream.output_stream, BedrockWrapper())
